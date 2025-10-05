@@ -5,12 +5,12 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import base64
 import sqlite3
+import os
 from pydantic import BaseModel
-from typing import Optional
 
 app = FastAPI(title="Certificate Generator API")
 
-# Enable CORS for Claude.ai and localhost
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,9 +19,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Database path
+DB_PATH = os.getenv('DATABASE_PATH', 'certificates.db')
+
 # Initialize database
 def init_db():
-    conn = sqlite3.connect('certificates.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS templates (
@@ -55,7 +58,7 @@ class TemplateConfig(BaseModel):
 
 @app.get("/")
 async def root():
-    conn = sqlite3.connect('certificates.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT COUNT(*) FROM templates')
     count = c.fetchone()[0]
@@ -74,9 +77,8 @@ async def root():
 
 @app.post("/api/template")
 async def create_template(config: TemplateConfig):
-    conn = sqlite3.connect('certificates.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     c.execute('''
         INSERT INTO templates (name, image_base64, text_x, text_y, font, font_size, alignment, color, language)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -91,16 +93,14 @@ async def create_template(config: TemplateConfig):
         config.color,
         config.language
     ))
-    
     template_id = c.lastrowid
     conn.commit()
     conn.close()
-    
     return {"template_id": template_id, "message": "Template saved successfully"}
 
 @app.get("/api/templates")
 async def list_templates():
-    conn = sqlite3.connect('certificates.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT id, name, language, created_at FROM templates')
     templates = [
@@ -112,15 +112,15 @@ async def list_templates():
 
 @app.get("/api/template/{template_id}")
 async def get_template(template_id: int):
-    conn = sqlite3.connect('certificates.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT * FROM templates WHERE id = ?', (template_id,))
     row = c.fetchone()
     conn.close()
-    
+
     if not row:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     return {
         "id": row[0],
         "name": row[1],
@@ -134,52 +134,50 @@ async def get_template(template_id: int):
 
 @app.get("/api/certificate/{template_id}")
 async def generate_certificate(template_id: int, name: str = Query(...)):
-    conn = DB_PATH = os.getenv('DATABASE_PATH', 'certificates.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT * FROM templates WHERE id = ?', (template_id,))
     row = c.fetchone()
     conn.close()
-    
+
     if not row:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     try:
         image_base64 = row[2]
         text_x, text_y = row[3], row[4]
         font_name, font_size = row[5], row[6]
         alignment, color = row[7], row[8]
-        
-        # Decode image
+
+        # Decode base64 image
         image_data = base64.b64decode(image_base64.split(',')[1])
         image = Image.open(io.BytesIO(image_data))
         draw = ImageDraw.Draw(image)
-        
-        # Use default font (for production, use actual font files)
+
+        # Load font (fallback to default if not found)
         try:
             font = ImageFont.truetype("arial.ttf", font_size)
         except:
             font = ImageFont.load_default()
-        
-        # Calculate position based on alignment
+
+        # Alignment adjustments
+        bbox = draw.textbbox((0, 0), name, font=font)
+        text_width = bbox[2] - bbox[0]
+
         if alignment == 'center':
-            bbox = draw.textbbox((0, 0), name, font=font)
-            text_width = bbox[2] - bbox[0]
             text_x = text_x - text_width / 2
         elif alignment == 'right':
-            bbox = draw.textbbox((0, 0), name, font=font)
-            text_width = bbox[2] - bbox[0]
             text_x = text_x - text_width
-        
-        # Draw text
+
+        # Draw text on image
         draw.text((text_x, text_y), name, fill=color, font=font)
-        
+
         # Return PNG
         img_bytes = io.BytesIO()
         image.save(img_bytes, format='PNG')
         img_bytes.seek(0)
-        
         return Response(content=img_bytes.getvalue(), media_type="image/png")
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
