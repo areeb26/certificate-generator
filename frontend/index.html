@@ -34,7 +34,13 @@
                 </select>
             </div>
 
-            <canvas id="canvas" class="border-2 border-gray-300 rounded-lg mb-4 max-w-full hidden"></canvas>
+            <canvas id="canvas" class="border-2 border-gray-300 rounded-lg mb-4 max-w-full hidden cursor-crosshair"></canvas>
+            
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 hidden" id="positionHelp">
+                <p class="text-sm text-blue-800">
+                    <strong>📍 Position the text:</strong> Click or drag on the certificate to place the name exactly where you want it
+                </p>
+            </div>
             
             <div id="controls" class="grid grid-cols-1 md:grid-cols-2 gap-4 hidden">
                 <div>
@@ -204,13 +210,47 @@
                     
                     canvas.classList.remove('hidden');
                     document.getElementById('controls').classList.remove('hidden');
+                    document.getElementById('positionHelp').classList.remove('hidden');
                     
-                    // Add click listener for positioning
-                    canvas.onclick = function(e) {
-                        const rect = canvas.getBoundingClientRect();
-                        textPosition.x = e.clientX - rect.left;
-                        textPosition.y = e.clientY - rect.top;
-                        updatePreview();
+                    // Mouse events for dragging text
+                    canvas.onmousedown = function(e) {
+                        isDragging = true;
+                        updateTextPosition(e);
+                    };
+                    
+                    canvas.onmousemove = function(e) {
+                        if (isDragging) {
+                            updateTextPosition(e);
+                        }
+                    };
+                    
+                    canvas.onmouseup = function(e) {
+                        isDragging = false;
+                    };
+                    
+                    canvas.onmouseleave = function(e) {
+                        isDragging = false;
+                    };
+                    
+                    // Touch events for mobile
+                    canvas.ontouchstart = function(e) {
+                        e.preventDefault();
+                        isDragging = true;
+                        const touch = e.touches[0];
+                        updateTextPosition(touch);
+                    };
+                    
+                    canvas.ontouchmove = function(e) {
+                        e.preventDefault();
+                        if (isDragging) {
+                            const touch = e.touches[0];
+                            updateTextPosition(touch);
+                        }
+                    };
+                    
+                    canvas.ontouchend = function(e) {
+                        e.preventDefault();
+                        isDragging = false;
                     };
                     
                     updatePreview();
@@ -218,6 +258,17 @@
                 img.src = event.target.result;
             };
             reader.readAsDataURL(file);
+        }
+
+        function updateTextPosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            textPosition.x = (e.clientX - rect.left) * scaleX;
+            textPosition.y = (e.clientY - rect.top) * scaleY;
+            
+            updatePreview();
         }
 
         function updatePreview() {
@@ -245,22 +296,30 @@
             }
             
             ctx.fillStyle = color;
-            ctx.textBaseline = 'middle';
+            ctx.textBaseline = 'alphabetic'; // Changed from 'middle' to 'alphabetic' for proper baseline
 
-            let x = canvas.width / 2;
-            const y = canvas.height * 0.65;
+            let x = textPosition.x;
+            const y = textPosition.y;
 
             if (alignment === 'left') {
                 ctx.textAlign = 'left';
-                x = canvas.width * 0.1;
             } else if (alignment === 'right') {
                 ctx.textAlign = 'right';
-                x = canvas.width * 0.9;
             } else {
                 ctx.textAlign = 'center';
             }
 
             ctx.fillText(name, x, y);
+            
+            // Draw a small crosshair at text position for reference
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x - 10, y);
+            ctx.lineTo(x + 10, y);
+            ctx.moveTo(x, y - 10);
+            ctx.lineTo(x, y + 10);
+            ctx.stroke();
         }
 
         async function saveTemplate() {
@@ -279,8 +338,8 @@
                 name: templateName,
                 image_base64: canvas.toDataURL('image/png'),
                 text_position: {
-                    x: canvas.width / 2,
-                    y: canvas.height * 0.65
+                    x: textPosition.x,
+                    y: textPosition.y
                 },
                 font: document.getElementById('fontFamily').value,
                 font_size: parseInt(document.getElementById('fontSize').value),
