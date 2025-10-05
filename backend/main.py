@@ -71,7 +71,8 @@ async def root():
             "create_template": "POST /api/template",
             "list_templates": "GET /api/templates",
             "get_template": "GET /api/template/{id}",
-            "generate_certificate": "GET /api/certificate/{id}?name=YourName"
+            "generate_certificate": "GET /api/certificate/{id}?name=YourName",
+            "debug_fonts": "GET /api/debug/fonts"
         }
     }
 
@@ -79,6 +80,7 @@ async def root():
 async def create_template(config: TemplateConfig):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    
     c.execute('''
         INSERT INTO templates (name, image_base64, text_x, text_y, font, font_size, alignment, color, language)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -93,9 +95,11 @@ async def create_template(config: TemplateConfig):
         config.color,
         config.language
     ))
+    
     template_id = c.lastrowid
     conn.commit()
     conn.close()
+    
     return {"template_id": template_id, "message": "Template saved successfully"}
 
 @app.get("/api/templates")
@@ -117,10 +121,10 @@ async def get_template(template_id: int):
     c.execute('SELECT * FROM templates WHERE id = ?', (template_id,))
     row = c.fetchone()
     conn.close()
-
+    
     if not row:
         raise HTTPException(status_code=404, detail="Template not found")
-
+    
     return {
         "id": row[0],
         "name": row[1],
@@ -132,6 +136,31 @@ async def get_template(template_id: int):
         "language": row[9]
     }
 
+@app.get("/api/debug/fonts")
+async def debug_fonts():
+    """Debug endpoint to check font availability"""
+    font_dir = os.path.join(os.path.dirname(__file__), 'fonts')
+    info = {
+        "font_dir": font_dir,
+        "exists": os.path.exists(font_dir),
+        "files": [],
+        "cwd": os.getcwd(),
+        "file_location": __file__
+    }
+    
+    if os.path.exists(font_dir):
+        info["files"] = os.listdir(font_dir)
+    
+    # Check system fonts
+    system_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoNastaliqUrdu-Regular.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+    ]
+    info["system_fonts"] = {path: os.path.exists(path) for path in system_paths}
+    
+    return info
+
 @app.get("/api/certificate/{template_id}")
 async def generate_certificate(template_id: int, name: str = Query(...)):
     conn = sqlite3.connect(DB_PATH)
@@ -139,45 +168,75 @@ async def generate_certificate(template_id: int, name: str = Query(...)):
     c.execute('SELECT * FROM templates WHERE id = ?', (template_id,))
     row = c.fetchone()
     conn.close()
-
+    
     if not row:
         raise HTTPException(status_code=404, detail="Template not found")
-
+    
     try:
         image_base64 = row[2]
         text_x, text_y = row[3], row[4]
         font_name, font_size = row[5], row[6]
         alignment, color = row[7], row[8]
-
-        # Decode base64 image
+        language = row[9]
+        
+        # Decode image
         image_data = base64.b64decode(image_base64.split(',')[1])
         image = Image.open(io.BytesIO(image_data))
         draw = ImageDraw.Draw(image)
-
-        # Load font (fallback to default if not found)
-        try:
-            font = ImageFont.truetype("arial.ttf", font_size)
-        except:
+        
+        # Load font - use fonts from fonts directory
+        font = None
+        font_dir = os.path.join(os.path.dirname(__file__), 'fonts')
+        
+        font_paths = []
+        if language == 'ur':
+            # Urdu font paths
+            font_paths = [
+                os.path.join(font_dir, 'NotoNastaliqUrdu-Regular.ttf'),
+                '/usr/share/fonts/truetype/noto/NotoNastaliqUrdu-Regular.ttf',
+            ]
+        else:
+            # English font paths
+            font_paths = [
+                os.path.join(font_dir, 'ARIAL.TTF'),
+                os.path.join(font_dir, 'Montserrat-Regular.ttf'),
+                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                '/System/Library/Fonts/Helvetica.ttc',
+            ]
+        
+        # Try each font path
+        for path in font_paths:
+            try:
+                if os.path.exists(path):
+                    font = ImageFont.truetype(path, font_size)
+                    break
+            except Exception as e:
+                continue
+        
+        # If all else fails, use default
+        if font is None:
             font = ImageFont.load_default()
-
-        # Alignment adjustments
-        bbox = draw.textbbox((0, 0), name, font=font)
-        text_width = bbox[2] - bbox[0]
-
+        
+        # Calculate position based on alignment
         if alignment == 'center':
+            bbox = draw.textbbox((0, 0), name, font=font)
+            text_width = bbox[2] - bbox[0]
             text_x = text_x - text_width / 2
         elif alignment == 'right':
+            bbox = draw.textbbox((0, 0), name, font=font)
+            text_width = bbox[2] - bbox[0]
             text_x = text_x - text_width
-
-        # Draw text on image
+        
+        # Draw text
         draw.text((text_x, text_y), name, fill=color, font=font)
-
+        
         # Return PNG
         img_bytes = io.BytesIO()
         image.save(img_bytes, format='PNG')
         img_bytes.seek(0)
+        
         return Response(content=img_bytes.getvalue(), media_type="image/png")
-
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
