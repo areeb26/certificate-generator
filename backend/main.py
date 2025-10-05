@@ -217,18 +217,35 @@ async def generate_certificate(template_id: int, name: str = Query(...)):
         if font is None:
             font = ImageFont.load_default()
         
+        # For RTL languages (Urdu), we need special handling
+        if language == 'ur':
+            # Urdu is RTL, so we need to handle text direction
+            try:
+                from arabic_reshaper import reshape
+                from bidi.algorithm import get_display
+                
+                # Reshape and reorder the text for proper RTL display
+                reshaped_text = reshape(name)
+                bidi_text = get_display(reshaped_text)
+                display_name = bidi_text
+            except:
+                # If libraries not available, use text as-is
+                display_name = name
+        else:
+            display_name = name
+        
         # Calculate position based on alignment
         if alignment == 'center':
-            bbox = draw.textbbox((0, 0), name, font=font)
+            bbox = draw.textbbox((0, 0), display_name, font=font, anchor='la')
             text_width = bbox[2] - bbox[0]
             text_x = text_x - text_width / 2
         elif alignment == 'right':
-            bbox = draw.textbbox((0, 0), name, font=font)
+            bbox = draw.textbbox((0, 0), display_name, font=font, anchor='la')
             text_width = bbox[2] - bbox[0]
             text_x = text_x - text_width
         
-        # Draw text
-        draw.text((text_x, text_y), name, fill=color, font=font)
+        # Draw text with proper baseline alignment
+        draw.text((text_x, text_y), display_name, fill=color, font=font, anchor='la')
         
         # Return PNG
         img_bytes = io.BytesIO()
