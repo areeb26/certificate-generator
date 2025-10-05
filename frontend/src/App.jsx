@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, Plus, Trash2, Eye, Settings, Copy, Check, Save } from 'lucide-react';
+import { Upload, Download, Plus, Trash2, Eye, Settings, Copy, Save } from 'lucide-react';
+
+// ✅ Backend URL from Environment Variable
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const CertificateGenerator = () => {
   const [templates, setTemplates] = useState([]);
@@ -51,15 +54,12 @@ const CertificateGenerator = () => {
 
   const handleCanvasClick = (e) => {
     if (!isPositioning || !selectedTemplate) return;
-    
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
-    
     const updatedTemplate = {
       ...selectedTemplate,
       config: {
@@ -67,7 +67,6 @@ const CertificateGenerator = () => {
         textPosition: { x, y }
       }
     };
-    
     setSelectedTemplate(updatedTemplate);
     setTemplates(templates.map(t => t.id === updatedTemplate.id ? updatedTemplate : t));
     setIsPositioning(false);
@@ -75,31 +74,25 @@ const CertificateGenerator = () => {
 
   const handleMouseDown = (e) => {
     if (isPositioning || !selectedTemplate) return;
-    
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    
     const mouseX = (e.clientX - rect.left) * scaleX;
     const mouseY = (e.clientY - rect.top) * scaleY;
-    
     const textPos = selectedTemplate.config.textPosition;
     const ctx = canvas.getContext('2d');
     ctx.font = `${selectedTemplate.config.fontSize}px ${selectedTemplate.config.font}`;
     const textMetrics = ctx.measureText(previewName);
     const textWidth = textMetrics.width;
     const textHeight = selectedTemplate.config.fontSize;
-    
     let textLeft = textPos.x;
     let textTop = textPos.y;
-    
     if (selectedTemplate.config.alignment === 'center') {
       textLeft = textPos.x - textWidth / 2;
     } else if (selectedTemplate.config.alignment === 'right') {
       textLeft = textPos.x - textWidth;
     }
-    
     if (mouseX >= textLeft && mouseX <= textLeft + textWidth &&
         mouseY >= textTop && mouseY <= textTop + textHeight) {
       setIsDragging(true);
@@ -112,15 +105,12 @@ const CertificateGenerator = () => {
 
   const handleMouseMove = (e) => {
     if (!isDragging || !selectedTemplate) return;
-    
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    
     const x = (e.clientX - rect.left) * scaleX - dragOffset.x;
     const y = (e.clientY - rect.top) * scaleY - dragOffset.y;
-    
     const updatedTemplate = {
       ...selectedTemplate,
       config: {
@@ -128,7 +118,6 @@ const CertificateGenerator = () => {
         textPosition: { x, y }
       }
     };
-    
     setSelectedTemplate(updatedTemplate);
     setTemplates(templates.map(t => t.id === updatedTemplate.id ? updatedTemplate : t));
   };
@@ -139,7 +128,6 @@ const CertificateGenerator = () => {
 
   const updateConfig = (key, value) => {
     if (!selectedTemplate) return;
-    
     const updatedTemplate = {
       ...selectedTemplate,
       config: {
@@ -147,10 +135,8 @@ const CertificateGenerator = () => {
         [key]: value
       }
     };
-    
     setSelectedTemplate(updatedTemplate);
     setTemplates(templates.map(t => t.id === updatedTemplate.id ? updatedTemplate : t));
-    
     setTimeout(() => {
       drawCertificate();
     }, 0);
@@ -165,9 +151,8 @@ const CertificateGenerator = () => {
 
   const saveTemplateToDB = async () => {
     if (!selectedTemplate) return;
-    
     try {
-      const response = await fetch('http://localhost:8000/api/template', {
+      const response = await fetch(`${API_URL}/api/template`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -181,15 +166,22 @@ const CertificateGenerator = () => {
           language: selectedTemplate.config.language
         })
       });
-      
       const data = await response.json();
       setSavedMessage(`✓ Template saved! ID: ${data.template_id}`);
       setTimeout(() => setSavedMessage(''), 4000);
     } catch (error) {
       console.error('Save error:', error);
-      setSavedMessage('✗ Error: Make sure API is running at localhost:8000');
+      setSavedMessage(`✗ Error: Make sure API is running at ${API_URL}`);
       setTimeout(() => setSavedMessage(''), 5000);
     }
+  };
+
+  const copyApiUrl = () => {
+    if (!selectedTemplate) return;
+    const url = `${API_URL}/api/certificate/${selectedTemplate.id}?name=${encodeURIComponent(previewName)}`;
+    navigator.clipboard.writeText(url);
+    setSavedMessage('API URL copied!');
+    setTimeout(() => setSavedMessage(''), 2000);
   };
 
   const exportTemplates = () => {
@@ -224,78 +216,50 @@ const CertificateGenerator = () => {
 
   const drawCertificate = () => {
     if (!selectedTemplate || !canvasRef.current) return;
-    
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     const img = imageRef.current;
-    
     if (!img || !img.complete) return;
-    
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
-    
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0);
-    
     const { textPosition, font, fontSize, alignment, color, language } = selectedTemplate.config;
-    
     ctx.direction = language === 'ur' ? 'rtl' : 'ltr';
     ctx.font = `${fontSize}px ${font}`;
     ctx.fillStyle = color;
     ctx.textBaseline = 'top';
-    
-    let textX = textPosition.x;
-    if (alignment === 'center') {
-      ctx.textAlign = 'center';
-    } else if (alignment === 'right') {
-      ctx.textAlign = 'right';
-    } else {
-      ctx.textAlign = 'left';
-    }
-    
-    ctx.fillText(previewName, textX, textPosition.y);
+    if (alignment === 'center') ctx.textAlign = 'center';
+    else if (alignment === 'right') ctx.textAlign = 'right';
+    else ctx.textAlign = 'left';
+    ctx.fillText(previewName, textPosition.x, textPosition.y);
   };
 
   const downloadCertificate = () => {
     if (!canvasRef.current) return;
-    
     try {
       drawCertificate();
-      
       setTimeout(() => {
         const dataURL = canvasRef.current.toDataURL('image/png', 1.0);
         const fileName = `certificate_${previewName.replace(/\s+/g, '_').replace(/[^\w\s-]/g, '')}.png`;
-        
         const link = document.createElement('a');
         link.href = dataURL;
         link.download = fileName;
         link.style.display = 'none';
-        
         document.body.appendChild(link);
         link.click();
-        
         setTimeout(() => {
           document.body.removeChild(link);
           window.URL.revokeObjectURL(dataURL);
         }, 100);
-        
         setSavedMessage('Certificate downloaded successfully!');
         setTimeout(() => setSavedMessage(''), 3000);
       }, 100);
-      
     } catch (error) {
       console.error('Download error:', error);
       setSavedMessage('Error downloading certificate');
       setTimeout(() => setSavedMessage(''), 3000);
     }
-  };
-
-  const copyApiUrl = () => {
-    if (!selectedTemplate) return;
-    const url = `http://localhost:8000/api/certificate/${selectedTemplate.id}?name=${encodeURIComponent(previewName)}`;
-    navigator.clipboard.writeText(url);
-    setSavedMessage('API URL copied!');
-    setTimeout(() => setSavedMessage(''), 2000);
   };
 
   useEffect(() => {
