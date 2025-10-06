@@ -4,11 +4,9 @@ from fastapi.responses import Response
 from PIL import Image, ImageDraw, ImageFont
 import io
 import base64
+import sqlite3
 import os
 from pydantic import BaseModel
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from urllib.parse import urlparse
 
 app = FastAPI(title="Certificate Generator API")
 
@@ -21,38 +19,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database connection
-def get_db_connection():
-    database_url = os.getenv('DATABASE_URL')
-    if database_url:
-        # Parse DATABASE_URL for PostgreSQL
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        return psycopg2.connect(database_url, cursor_factory=RealDictCursor)
-    return None
+# Database path
+DB_PATH = os.getenv('DATABASE_PATH', 'certificates.db')
 
 # Initialize database
 def init_db():
-    conn = get_db_connection()
-    if conn:
-        c = conn.cursor()
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS templates (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                image_base64 TEXT NOT NULL,
-                text_x REAL NOT NULL,
-                text_y REAL NOT NULL,
-                font TEXT NOT NULL,
-                font_size INTEGER NOT NULL,
-                alignment TEXT NOT NULL,
-                color TEXT NOT NULL,
-                language TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-        conn.close()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            image_base64 TEXT NOT NULL,
+            text_x REAL NOT NULL,
+            text_y REAL NOT NULL,
+            font TEXT NOT NULL,
+            font_size INTEGER NOT NULL,
+            alignment TEXT NOT NULL,
+            color TEXT NOT NULL,
+            language TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 init_db()
 
@@ -68,13 +58,10 @@ class TemplateConfig(BaseModel):
 
 @app.get("/")
 async def root():
-    conn = get_db_connection()
-    if not conn:
-        return {"message": "Certificate Generator API", "status": "running (no database)", "templates_count": 0}
-    
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT COUNT(*) as count FROM templates')
-    count = c.fetchone()['count']
+    c.execute('SELECT COUNT(*) FROM templates')
+    count = c.fetchone()[0]
     conn.close()
     return {
         "message": "Certificate Generator API",
@@ -91,16 +78,12 @@ async def root():
 
 @app.post("/api/template")
 async def create_template(config: TemplateConfig):
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=500, detail="Database not available")
-    
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
     c.execute('''
         INSERT INTO templates (name, image_base64, text_x, text_y, font, font_size, alignment, color, language)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         config.name,
         config.image_base64,
@@ -113,7 +96,7 @@ async def create_template(config: TemplateConfig):
         config.language
     ))
     
-    template_id = c.fetchone()['id']
+    template_id = c.lastrowid
     conn.commit()
     conn.close()
     
@@ -121,24 +104,21 @@ async def create_template(config: TemplateConfig):
 
 @app.get("/api/templates")
 async def list_templates():
-    conn = get_db_connection()
-    if not conn:
-        return {"templates": [], "count": 0}
-    
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT id, name, language, created_at FROM templates ORDER BY created_at DESC')
-    templates = [dict(row) for row in c.fetchall()]
+    c.execute('SELECT id, name, language, created_at FROM templates')
+    templates = [
+        {"id": row[0], "name": row[1], "language": row[2], "created_at": row[3]}
+        for row in c.fetchall()
+    ]
     conn.close()
     return {"templates": templates, "count": len(templates)}
 
 @app.get("/api/template/{template_id}")
 async def get_template(template_id: int):
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=500, detail="Database not available")
-    
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT * FROM templates WHERE id = %s', (template_id,))
+    c.execute('SELECT * FROM templates WHERE id = ?', (template_id,))
     row = c.fetchone()
     conn.close()
     
@@ -146,14 +126,14 @@ async def get_template(template_id: int):
         raise HTTPException(status_code=404, detail="Template not found")
     
     return {
-        "id": row['id'],
-        "name": row['name'],
-        "text_position": {"x": row['text_x'], "y": row['text_y']},
-        "font": row['font'],
-        "font_size": row['font_size'],
-        "alignment": row['alignment'],
-        "color": row['color'],
-        "language": row['language']
+        "id": row[0],
+        "name": row[1],
+        "text_position": {"x": row[3], "y": row[4]},
+        "font": row[5],
+        "font_size": row[6],
+        "alignment": row[7],
+        "color": row[8],
+        "language": row[9]
     }
 
 @app.get("/api/debug/fonts")
@@ -183,12 +163,9 @@ async def debug_fonts():
 
 @app.get("/api/certificate/{template_id}")
 async def generate_certificate(template_id: int, name: str = Query(...)):
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=500, detail="Database not available")
-    
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT * FROM templates WHERE id = %s', (template_id,))
+    c.execute('SELECT * FROM templates WHERE id = ?', (template_id,))
     row = c.fetchone()
     conn.close()
     
@@ -196,11 +173,11 @@ async def generate_certificate(template_id: int, name: str = Query(...)):
         raise HTTPException(status_code=404, detail="Template not found")
     
     try:
-        image_base64 = row['image_base64']
-        text_x, text_y = row['text_x'], row['text_y']
-        font_name, font_size = row['font'], row['font_size']
-        alignment, color = row['alignment'], row['color']
-        language = row['language']
+        image_base64 = row[2]
+        text_x, text_y = row[3], row[4]
+        font_name, font_size = row[5], row[6]
+        alignment, color = row[7], row[8]
+        language = row[9]
         
         # Decode image
         image_data = base64.b64decode(image_base64.split(',')[1])
