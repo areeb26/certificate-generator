@@ -121,13 +121,14 @@ async def get_template(template_id: int):
     c.execute('SELECT * FROM templates WHERE id = ?', (template_id,))
     row = c.fetchone()
     conn.close()
-    
+
     if not row:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     return {
         "id": row[0],
         "name": row[1],
+        "image_base64": row[2],
         "text_position": {"x": row[3], "y": row[4]},
         "font": row[5],
         "font_size": row[6],
