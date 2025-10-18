@@ -167,6 +167,15 @@ const CertificateGenerator = () => {
         })
       });
       const data = await response.json();
+
+      // Update the template ID to the backend-generated ID
+      const updatedTemplate = {
+        ...selectedTemplate,
+        id: data.template_id
+      };
+      setSelectedTemplate(updatedTemplate);
+      setTemplates(templates.map(t => t.id === selectedTemplate.id ? updatedTemplate : t));
+
       setSavedMessage(`✓ Template saved! ID: ${data.template_id}`);
       setTimeout(() => setSavedMessage(''), 4000);
     } catch (error) {
@@ -261,6 +270,46 @@ const CertificateGenerator = () => {
       setTimeout(() => setSavedMessage(''), 3000);
     }
   };
+
+  // Load templates from backend on mount
+  useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/templates`);
+        const data = await response.json();
+
+        if (data.templates && data.templates.length > 0) {
+          // Fetch full template data for each template
+          const loadedTemplates = await Promise.all(
+            data.templates.map(async (template) => {
+              const fullResponse = await fetch(`${API_URL}/api/template/${template.id}`);
+              const fullData = await fullResponse.json();
+
+              return {
+                id: fullData.id,
+                name: fullData.name,
+                image: fullData.image_base64,
+                config: {
+                  textPosition: fullData.text_position,
+                  font: fullData.font,
+                  fontSize: fullData.font_size,
+                  alignment: fullData.alignment,
+                  color: fullData.color,
+                  language: fullData.language
+                }
+              };
+            })
+          );
+
+          setTemplates(loadedTemplates);
+        }
+      } catch (error) {
+        console.error('Error loading templates:', error);
+      }
+    };
+
+    loadTemplates();
+  }, []);
 
   useEffect(() => {
     if (selectedTemplate && imageRef.current?.complete) {
